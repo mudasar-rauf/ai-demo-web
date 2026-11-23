@@ -21,7 +21,7 @@ From the issue, in its words:
 
 Derived:
 
-- **AC5 (derived).** The share done is `done / total × 100` rounded to the nearest whole number (halves up), shown with a `%` sign, for example 1 of 3 done → `33%`, 2 of 3 → `67%`, 3 of 3 → `100%`.
+- **AC5 (derived).** The share done is `done × 100 / total` rounded to the nearest whole number (halves up), shown with a `%` sign, for example 1 of 3 done → `33%`, 2 of 3 → `67%`, 3 of 3 → `100%`, 23 of 40 → `58%`.
 - **AC6 (derived).** While the API's summary endpoint is not built (it answers 501), the screen says "Not built yet on the server", as every screen does through the shared `ErrorState`. That message has no Retry: the shared rule treats 501 as "this endpoint is not deployed yet", not as a failure that retrying fixes. Any other error the shared `ErrorState` knows (404, 422) gets its shared message. Every remaining error from `GET /tasks/summary` (a network error, a 500, a 503) says "Could not reach the API" and offers Retry, which is how AC3's "offers to try again" is met. (The plan records this reading as assumption A2 and open question Q1.)
 
 ## Release

@@ -20,7 +20,7 @@ As a person using the Tasks app, I want a Summary screen that tells me how many 
 | AC2 | With no tasks: 0 for each count and the share done as 0%, never a division by zero | ticket |
 | AC3 | Loading and an error each have their own words, and an error offers to try again | ticket |
 | AC4 | Tests in `src/screens/summary/` cover AC1–AC3 against the mock, inside the test router; ESLint, `tsc`, Vitest and the build pass in CI | ticket |
-| AC5 | Share done = `Math.round(done / total * 100)`, shown as `<n>%` | derived (makes "whole percentage" testable) |
+| AC5 | Share done = `Math.round((done * 100) / total)`, shown as `<n>%` (23 of 40 → 58%) | derived (makes "whole percentage" testable) |
 | AC6 | A 501 from the endpoint says "Not built yet on the server" (shared rule, no Retry) | derived (the API stubs this endpoint with 501 today, `docs/contracts/api.md` line 16) |
 
 ### Non-functional requirements
@@ -34,7 +34,7 @@ The Tasks and Task screens, `src/routes/`, `src/api/` (client, mock, types, `use
 
 ### Assumptions
 
-- **A1.** "Whole percentage" means rounded to the nearest integer with `Math.round` (halves up). So 199 of 200 done shows `100%` and 1 of 300 shows `0%`; this is accepted as normal rounding. If the product wants "never 100% until all done", only `shareDone` changes (Q2).
+- **A1.** "Whole percentage" means rounded to the nearest integer with `Math.round` (halves up), computed as `Math.round((done * 100) / total)`. Multiplying first keeps the numerator an integer, so an exact half such as 23 of 40 (57.5) rounds up to 58; `(done / total) * 100` gives 57.49999999999999 in floating point and would round down to 57. So 199 of 200 done shows `100%` and 1 of 300 shows `0%`; this is accepted as normal rounding. If the product wants "never 100% until all done", only `shareDone` changes (Q2).
 - **A2.** AC3's "an error offers to try again" is met by the shared `ErrorState`: every error that retrying can fix ("Could not reach the API": network errors and non-501 server errors) shows a Retry button that reloads. A 501 shows "Not built yet on the server" without Retry, as on every screen (AC6). A 404 or 422 is not expected for an endpoint that takes no input, but if one comes, `ErrorState` shows its shared message for it; the screen does nothing special. (Q1)
 - **A3.** "Loading … has its own words" is met by the shared `LoadingState`, an Astryx `Spinner` whose accessible name is "Loading" (`src/components/LoadingState.tsx`). The screen adds no second loading text.
 
@@ -70,7 +70,7 @@ Verified by reading the code at `acd90c9`:
 
 | File | Change | New / modified |
 |---|---|---|
-| `src/screens/summary/shareDone.ts` | `export function shareDone(summary: Summary): number` — `0` when `total <= 0`, else `Math.round((done / total) * 100)` | new |
+| `src/screens/summary/shareDone.ts` | `export function shareDone(summary: Summary): number` — `0` when `total <= 0`, else `Math.round((done * 100) / total)` (multiply first: integer numerator, so exact halves round up) | new |
 | `src/screens/summary/shareDone.test.ts` | unit tests (§7) | new |
 | `src/screens/summary/useSummaryData.ts` | `export function useSummaryData(): Resource<Summary>` — `useApiResource((api) => api.getSummary(), [])` | new |
 | `src/screens/summary/SummaryScreen.tsx` | the screen: heading, loading, error, figures; drop the flag check and the `isSummaryEnabled`/`NotBuiltYet` imports | modified |
@@ -113,7 +113,7 @@ None beyond the existing client: one GET on mount, no user input.
 | Decision | Choice | Rationale | Alternatives rejected |
 |---|---|---|---|
 | Where the percentage is computed | Pure `shareDone()` in the screen folder | Unit-testable without rendering; the zero guard lives in one place | Inline in JSX (harder to test edge cases); in `src/api/` (out of scope, shared files) |
-| Rounding | `Math.round` | The usual meaning of "whole percentage"; A1 | `Math.floor` (shows 99% for 199/200 but 0% for 1/300 too); clamping rules (complexity with no stated need) |
+| Rounding | `Math.round((done * 100) / total)` | The usual meaning of "whole percentage"; A1 | `Math.floor` (shows 99% for 199/200 but 0% for 1/300 too); clamping rules (complexity with no stated need) |
 | Data access | `useSummaryData` on `useApiResource` | The convention #1 fixed (README "Building a screen"); same loading/error/reload behaviour as the other screens | Calling `useApiClient()` with a hand-rolled effect (duplicates `useApiResource`) |
 | Errors and retry | Shared `ErrorState` unchanged | Same messages on every screen; changing it is out of scope; A2 | A screen-specific Retry for 501 (diverges from the other screens) |
 
@@ -152,7 +152,7 @@ T1 → T2 → T3, with T3's tests written alongside T2 (test-first). About one d
 
 | AC | Task | Test type | What the test verifies |
 |---|---|---|---|
-| AC1, AC5 | T1 | unit (`shareDone.test.ts`) | `{3,2,1}` → 33; `{3,1,2}` → 67; `{3,0,3}` → 100; `{2,1,1}` → 50; `{200,1,199}` → 100 (rounding, A1); `{8,7,1}` → 13 (12.5 rounds up) |
+| AC1, AC5 | T1 | unit (`shareDone.test.ts`) | `{3,2,1}` → 33; `{3,1,2}` → 67; `{3,0,3}` → 100; `{2,1,1}` → 50; `{200,1,199}` → 100 (rounding, A1); `{8,7,1}` → 13 (12.5 rounds up); `{40,17,23}` → 58 (57.5 rounds up; `(23 / 40) * 100` would give 57) |
 | AC2 | T1 | unit | `{0,0,0}` → 0, and the result is a finite number |
 | AC1 | T3 | component in the test router | seed 3 tasks, 1 done; `getByRole('heading', { level: 1, name: 'Summary' })`; "Total tasks" 3, "Open" 2, "Done" 1, "Share done" 33% |
 | AC2 | T3 | component | empty mock; each count 0 and "Share done" 0%; no "NaN" or "Infinity" in `main` |
@@ -200,3 +200,8 @@ Rework 1, from the plan gate (rejected for one change):
 - **Architect m3.** The plan no longer says 404 and 422 cannot happen: they are not expected, and if one comes the shared `ErrorState` shows its message (A2, spec AC6).
 - **Architect m4.** One heading rule: a single level-1 page heading "Summary" via `<Text as="h1">`, shown in every state, and tested by role and level (§4, §7).
 - Everything else stands.
+
+Rework 2, from the plan gate (rejected for one change, the architect's m1):
+
+- **Architect m1.** The share is computed as `Math.round((done * 100) / total)`, not `Math.round((done / total) * 100)`, which gives 57 for 23 of 40 instead of 58 (floating point: 57.49999999999999). Changed in AC5 (§2 and the spec), A1, §4's file table, §6's rounding decision, and added the 23-of-40 → 58 unit test to T1 (§7).
+- Everything else in the plan stands.
