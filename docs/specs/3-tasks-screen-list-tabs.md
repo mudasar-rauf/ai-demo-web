@@ -24,10 +24,9 @@ From the issue, in its words:
 
 Derived:
 
-- **AC8 (derived).** The screen stays behind the scaffold's existing flag `VITE_FF_TASKS`, off by default: while it is off, `/` shows "Not built yet" as today. No new flag is added.
-- **AC9 (derived).** The chosen tab is kept in the URL as `?status=open` or `?status=done` (All is `/` with no query), so it survives going to a Task screen and back. Any other value is treated as All.
-- **AC10 (derived).** Only files in `src/screens/tasks/` change, and no dependency is added. Every component comes from Astryx.
+- **AC8 (derived).** The chosen tab is kept in the URL as `?status=open` or `?status=done` (All is `/` with no query), so it survives going to a Task screen and back. Any other value is treated as All.
+- **AC9 (derived).** Only files in `src/screens/tasks/` change, and no dependency is added. Every component comes from Astryx.
 
 ## Not in scope
 
-The Task and Summary screens, the route files, the client, the mock, the contract, and any dependency. Deleting or editing a task's title, notes or due date. Removing the `VITE_FF_TASKS` flag (it lives in `src/flags.ts`, outside this issue's folder).
+The Task and Summary screens, the route files, the client, the mock, the contract, and any dependency. Deleting or editing a task's title, notes or due date. Any feature flag: the screen ships without one, as the issue says, and merging is the release. `src/flags.ts`, `.env.example` and the README's flag table stay as they are (outside this issue's folder).
