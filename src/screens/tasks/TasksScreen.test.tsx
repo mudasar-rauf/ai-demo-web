@@ -184,3 +184,73 @@ describe('TasksScreen: links (AC6)', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe(`/tasks/${MILK.id}`));
   });
 });
+
+/** The calls that were not GETs, as method, URL and parsed body. */
+function writes(fetchSpy: ReturnType<typeof vi.fn>) {
+  return fetchSpy.mock.calls
+    .map(([input, init]: [unknown, RequestInit | undefined]) => ({
+      method: init?.method ?? 'GET',
+      url: String(input),
+      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+    }))
+    .filter((call) => call.method !== 'GET');
+}
+
+describe('TasksScreen: ticking a task done (AC4)', () => {
+  it('ticking calls PATCH /tasks/{id} with done, and the row updates; unticking reverses it', async () => {
+    const { main, mock, fetchSpy } = await renderTasks();
+    const box = (await within(main).findByRole('checkbox', { name: 'Done: Buy milk' })) as HTMLInputElement;
+
+    await userEvent.click(box);
+    await waitFor(() => expect(mock.tasks().find((t) => t.id === MILK.id)?.done).toBe(true));
+    await waitFor(() => expect(box).toBeEnabled());
+    expect(box).toBeChecked();
+    expect(writes(fetchSpy)).toEqual([{ method: 'PATCH', url: `http://mock/tasks/${MILK.id}`, body: { done: true } }]);
+
+    await userEvent.click(box);
+    await waitFor(() => expect(mock.tasks().find((t) => t.id === MILK.id)?.done).toBe(false));
+    await waitFor(() => expect(box).toBeEnabled());
+    expect(box).not.toBeChecked();
+    expect(writes(fetchSpy).at(-1)).toEqual({ method: 'PATCH', url: `http://mock/tasks/${MILK.id}`, body: { done: false } });
+  });
+
+  it('keeps a ticked row on the Open tab, so a mis-click can be undone', async () => {
+    const { main } = await renderTasks('/?status=open');
+    const box = await within(main).findByRole('checkbox', { name: 'Done: Bake bread' });
+    await userEvent.click(box);
+    await waitFor(() => expect(box).toBeEnabled());
+    expect(box).toBeChecked();
+    expect(rowTitles(main)).toEqual(['Bake bread', 'Buy milk']);
+  });
+
+  it('when the call fails, the box goes back and an error names the task', async () => {
+    const { main, mock } = await renderTasks('/', [MILK, BREAD], (api) => api.notImplemented('updateTask'));
+    const box = await within(main).findByRole('checkbox', { name: 'Done: Buy milk' });
+
+    await userEvent.click(box);
+    expect(await within(main).findByText('Could not update "Buy milk". Try again.')).toBeInTheDocument();
+    expect(box).not.toBeChecked();
+    expect(box).toBeEnabled();
+    expect(mock.tasks().find((t) => t.id === MILK.id)?.done).toBe(false);
+  });
+
+  it('clears the error once a later tick succeeds', async () => {
+    let fail = true;
+    const mock = createMockApi();
+    mock.seed([MILK, BREAD]);
+    const fetchSpy = vi.fn<typeof fetch>((input, init) =>
+      init?.method === 'PATCH' && fail ? Promise.reject(new TypeError('Failed to fetch')) : mock.fetch(input, init),
+    );
+    await renderWithRouter('/', { client: createApiClient({ baseUrl: 'http://mock', fetch: fetchSpy }) });
+    const main = screen.getByRole('main');
+
+    await userEvent.click(await within(main).findByRole('checkbox', { name: 'Done: Buy milk' }));
+    expect(await within(main).findByText('Could not update "Buy milk". Try again.')).toBeInTheDocument();
+
+    fail = false;
+    const bread = within(main).getByRole('checkbox', { name: 'Done: Bake bread' });
+    await userEvent.click(bread);
+    await waitFor(() => expect(within(main).queryByText(/Could not update/)).not.toBeInTheDocument());
+    expect(bread).toBeChecked();
+  });
+});
