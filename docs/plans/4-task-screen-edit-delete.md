@@ -4,12 +4,24 @@
 
 ## 1. Summary
 
-Build the Task screen at `/tasks/$id` in `src/screens/task/`, replacing the "on" branch of
-`TaskScreen`. A hook, `useTaskData(id)`, loads the task through `useApiResource`. A form holds a
+Build the Task screen at `/tasks/$id` in `src/screens/task/`, replacing the scaffold's
+`NotBuiltYet` in `TaskScreen`. A hook, `useTaskData(id)`, loads the task through `useApiResource`. A form holds a
 draft of the four editable fields, compares it with the loaded task to build a `TaskUpdate` of only
 the changed fields, validates the title locally, and sends it with `useApiClient().updateTask`.
-Delete opens a confirm dialog and, on yes, calls `deleteTask` and navigates to `/`. Everything stays
-behind the existing `VITE_FF_TASK` flag. No file outside `src/screens/task/` changes.
+Delete opens a confirm dialog and, on yes, calls `deleteTask` and navigates to `/`. There is no feature flag: the issue says so and its author confirmed it
+(2026-11-23); merging is the release. No file outside `src/screens/task/` changes.
+
+## Rework after the architecture review
+
+| Finding | How this plan addresses it |
+|---|---|
+| B1 no flag | The person chose (b): no flag. Derived AC6 (flag off) is dropped from the spec and the old AC7 is renumbered AC6. `TaskScreen` renders the screen with no `isTaskEnabled()` check; the flag-off/flag-on test is replaced, not kept; no test stubs `VITE_FF_TASK`. Section 8: merging is the release, rollback is reverting the PR. `src/flags.ts` stays as it is (out of scope); `isTaskEnabled` remains exported and tested by `src/flags.test.ts`, and ESLint's `no-unused-vars` does not flag unused exports. Its removal is a follow-up (section 12). |
+| m1 edits during save | The fields, Save and Delete are disabled while the PATCH is in flight (A5), so no keystroke can be overwritten by the response. |
+| m2 Save with an invalid title | Decided: Save is enabled whenever something has changed; the title is validated on click (A7). |
+| m3 load 422 | The screen passes `new ApiError(404, { detail: 'Task not found' })` to `ErrorState` (A4). |
+| m4 Delete 404 | A 404 from DELETE counts as success: navigate to `/` (A8). |
+| Q renderWithRouter `{client}` | Verified: the option exists; with it, the returned `mock` is `undefined`. The test builds its own `createMockApi()`, wraps its `fetch` in a recording spy, and calls `seed()`/`tasks()` on that mock (T3). The mock has no request log. |
+| Q `Task.notes` nullable | Verified in `src/api/types.ts`: `notes: string` (non-null); only `due` is `string \| null`. `toDraft` copies notes as is. |
 
 ## 2. Requirements
 
@@ -22,8 +34,7 @@ behind the existing `VITE_FF_TASK` flag. No file outside `src/screens/task/` cha
 | AC3 | Empty or >200-char title → message, not sent; API 422 → its message | ticket |
 | AC4 | Delete confirms; yes → `DELETE` and back to Tasks; no → nothing | ticket |
 | AC5 | Tests in `src/screens/task/` cover AC1–AC4 against the mock in the test router; lint, tsc, Vitest, build pass | ticket |
-| AC6 | Flag off → "Not built yet" | derived |
-| AC7 | Shared loading/error states; Save/Delete errors keep edits | derived |
+| AC6 | Shared loading/error states; Save/Delete errors keep edits | derived |
 
 Full wording in the spec.
 
@@ -32,13 +43,13 @@ Full wording in the spec.
 - Accessibility: every field has a visible label (Title, Notes, Due date, Done); the confirm dialog
   is a real dialog (focus moves into it, Escape closes it as "no"); the saved message and errors are
   announced (Astryx `Banner`, which ErrorState already uses).
-- Double submit: Save and Delete are disabled while their request is in flight.
+- Double submit: Save and Delete (and, during a save, the fields) are disabled while a request is in flight.
 
 ### Out of scope
 
 Tasks and Summary screens, `src/routes/`, `src/api/*` (client, mock, types), the contract,
-dependencies, `src/test/renderWithRouter.tsx`, `src/flags.ts`, README. Removing the flag is a later
-step after the screen ships.
+dependencies, `src/test/renderWithRouter.tsx`, `src/flags.ts`, README. Removing the now unused `isTaskEnabled`
+is a follow-up.
 
 ### Assumptions
 
@@ -50,20 +61,29 @@ step after the screen ships.
   (the issue only asks for local title checks).
 - **A3. Due date** uses a date input whose value is `"YYYY-MM-DD"` or `""`; `""` maps to `due: null`.
 - **A4. A non-UUID id** (`/tasks/abc`) gets a 422 from `GET /tasks/{id}`. The screen treats a 422 on
-  the load like a 404 and shows "Task not found" with the link back — to a person it is the same
-  unknown task. (ErrorState would otherwise say "The request was invalid".)
+  the load like a 404 — to a person it is the same unknown task — by rendering
+  `<ErrorState error={new ApiError(404, { detail: 'Task not found' })} />`, which shows
+  "Task not found" and the "Back to Tasks" link. (ErrorState would otherwise say "The request was invalid".)
 - **A5. After Save** the draft is reset from the task the `PATCH` returned (so `done_at`, the trimmed
   title etc. come from the server), Save becomes disabled again, and a success banner "Saved" shows
-  until the next edit. No reload of `GET` is needed: the PATCH response is the saved task.
+  until the next edit. No reload of `GET` is needed: the PATCH response is the saved task. While the
+  PATCH is in flight, every field, Save and Delete are disabled, so the reset cannot overwrite edits.
 - **A6. Confirm** uses Astryx's dialog component (or `AlertDialog` if Astryx has one), not
   `window.confirm`, so tests can drive it and the screen stays Astryx-only (README "Components").
+- **A7. Save and an invalid title.** Save is enabled whenever something has changed and nothing is
+  in flight, whatever the title. Clicking it validates the title; an invalid one shows its message
+  on the Title field and sends nothing. The message clears on the next edit of the title.
+- **A8. Delete 404.** The task is already gone, so a 404 from DELETE is treated as success:
+  navigate to `/`. Other Delete errors show `ErrorState` and stay on the screen.
+- **A9. Notes** is `string` in `Task` (never null), so `toDraft` copies it unchanged.
 
 ## 3. Current state (verified)
 
 - `src/routes/tasks.$id.tsx` renders `<TaskScreen id={id} />`; frozen.
 - `src/screens/task/TaskScreen.tsx` returns `<NotBuiltYet />` both when `isTaskEnabled()` is false and
-  in the "on" branch to replace. `TaskScreen.test.tsx` asserts "Not built yet" for flag off **and on**
-  — the "on" case must change.
+  otherwise. `TaskScreen.test.tsx` asserts "Not built yet" for flag off and on; both cases are replaced.
+- `src/api/types.ts`: `Task.notes: string`, `Task.due: string | null`; `TaskUpdate` fields optional,
+  `due: null` clears the date.
 - `src/api/useApiResource.ts`: `useApiResource(load, deps)` → `{status: 'loading'|'error'|'ready', data, error, reload}`.
 - `src/api/ApiProvider.tsx`: `useApiClient()` for mutations. `src/api/client.ts`: `getTask`,
   `updateTask(id, TaskUpdate)`, `deleteTask(id)`; non-2xx throws `ApiError {status, body}`.
@@ -74,35 +94,34 @@ step after the screen ships.
   title (trimmed, 1–200), notes ≤ 2000, rejects unknown fields and nulls for title/notes/done → 422
   with `loc` and `msg`; `seed(tasks)`, `tasks()`, `notImplemented(...)`.
 - `src/test/renderWithRouter.tsx`: renders layout + screens in a memory-history router with a fresh
-  mock; returns `{router, mock}`. `router.state.location.pathname` shows navigation.
+  mock; returns `{router, mock}`. It accepts `{client}`; then `mock` is `undefined`. `router.state.location.pathname` shows navigation.
 
 ## 4. Proposed design
 
 ### Components and data flow
 
 ```
-TaskScreen(id) ── flag off ──> NotBuiltYet
-     │ flag on
+TaskScreen(id)
      ▼
 useTaskData(id) = useApiResource(api => api.getTask(id), [id])
      │ loading → LoadingState
-     │ error 404/422 → ErrorState with a 404 ApiError ("Task not found" + Back to Tasks)
+     │ error 404/422 → ErrorState with new ApiError(404, {detail: 'Task not found'})
      │ other error → ErrorState(error, reload)
      ▼ ready(task)
 TaskForm(task, key=task.id) ── Save ──> client.updateTask(id, changedFields(task, draft)) ─> setSaved(task')
-                            └─ Delete → ConfirmDialog ── yes ─> client.deleteTask(id) ─> navigate({to: '/'})
+                            └─ Delete → ConfirmDialog ── yes ─> client.deleteTask(id) (or 404) ─> navigate({to: '/'})
 ```
 
 ### Changes by component
 
 | File | Change | New / modified |
 |---|---|---|
-| `src/screens/task/TaskScreen.tsx` | Replace the "on" branch: call `useTaskData`, branch on status, render `TaskForm`. Remove the "props unused" comment. | modified |
+| `src/screens/task/TaskScreen.tsx` | Remove the `isTaskEnabled()` check and its import; call `useTaskData`, branch on status, render `TaskForm`. Remove the "props unused" comment. | modified |
 | `src/screens/task/useTaskData.ts` | `useTaskData(id: string): Resource<Task>` on `useApiResource`. | new |
 | `src/screens/task/taskDraft.ts` | Pure helpers: `type TaskDraft = {title: string; notes: string; due: string; done: boolean}`; `toDraft(task)`; `changedFields(task, draft): TaskUpdate`; `validateTitle(title): string \| undefined`. | new |
 | `src/screens/task/TaskForm.tsx` | The form: fields, Save, Delete, confirm dialog, saved and error banners. | new |
 | `src/screens/task/taskDraft.test.ts` | Unit tests for the helpers. | new |
-| `src/screens/task/TaskScreen.test.tsx` | Keep the flag-off case; replace the flag-on case with the screen tests below. | modified |
+| `src/screens/task/TaskScreen.test.tsx` | Replace the flag off/on case with the screen tests below; no env stubbing. | modified |
 
 A separate `TaskForm` file is the engineer's call; the helper module is required so the "only
 changed fields" rule is unit-tested.
@@ -123,18 +142,19 @@ export function validateTitle(title: string): string | undefined; // message, or
 
 Save is enabled iff `Object.keys(changedFields(saved, draft)).length > 0` and no request is in flight.
 Clicking Save with an invalid title shows the message next to the Title field (`TextField`'s error
-prop) and sends nothing. (Whether Save is also disabled while the title is invalid is the engineer's
-call; the test asserts that no PATCH is sent and the message shows.)
+prop) and sends nothing. Save is not disabled by an invalid title (A7).
 
 ### Error handling
 
 | Case | Shows |
 |---|---|
-| Load 404 or 422 | `ErrorState` with a 404 → "Task not found", "Back to Tasks" link to `/` (A4) |
+| Load 404 | `<ErrorState error={error} />` → the API's "Task not found", "Back to Tasks" link to `/` |
+| Load 422 | `<ErrorState error={new ApiError(404, { detail: 'Task not found' })} />` (A4) |
 | Load other error | `ErrorState error={error} onRetry={reload}` |
 | Save 422 | Each 422 `msg` inline on its field by `loc` (`['body','title']` → Title, etc.); any without a known field via `<ErrorState error={e} />` above the form. Edits kept. |
 | Save 404 (deleted elsewhere) / network / 501 | `<ErrorState error={e} />` above the form; edits kept. |
-| Delete error | `<ErrorState error={e} />`; stays on the screen. |
+| Delete 404 | Treated as success: navigate to `/` (A8). |
+| Delete other error | `<ErrorState error={e} />`; stays on the screen, edits kept. |
 
 The saved message clears on the next edit; a Save error clears the saved message.
 
@@ -147,6 +167,10 @@ The saved message clears on the next edit; a Save error clears the saved message
 | Reset on id change | `key={task.id}` on `TaskForm` | Fresh draft per task without effects | Syncing draft in an effect |
 | Non-UUID id | Show "Task not found" | Same meaning to a person (A4) | "The request was invalid" |
 | Confirm | Astryx dialog | Astryx-only rule; testable | `window.confirm` |
+| Feature flag | None; merging is the release | The issue says so; its author confirmed it (B1) | Keeping `VITE_FF_TASK` |
+| Edits during save | Disable the fields while the PATCH is in flight | Simplest; nothing can be lost (m1) | Tracking edits made since the click |
+| Invalid title | Validate on click; Save stays enabled | Matches AC3's "is not sent" test (m2) | Disabling Save as the person types |
+| Delete 404 | Success | The task is gone either way (m4) | Showing an error |
 
 No ADR: no shared contract, module boundary or dependency changes.
 
@@ -160,29 +184,32 @@ No ADR: no shared contract, module boundary or dependency changes.
 - Depends on: none.
 
 ### T2. Load and show the task (S)
-- Goal: `useTaskData` and the "on" branch of `TaskScreen`: loading, errors, and a form pre-filled
+- Goal: `useTaskData` and `TaskScreen` with no flag check: loading, errors, and a form pre-filled
   with title, notes, due date and done (read-only Save/Delete wiring may come in T3/T4).
 - Done when: screen tests for AC1 (fields show the seeded values; unknown UUID → "Task not found"
-  and a "Back to Tasks" link to `/`; non-UUID id → same), AC6 (flag off), AC7 (loading spinner;
-  `mock.notImplemented('getTask')` → "Not built yet on the server").
+  and a "Back to Tasks" link to `/`; non-UUID id → same), AC6 (loading spinner;
+  `mock.notImplemented('getTask')` → "Not built yet on the server"). The old flag test is removed.
 - Depends on: none (parallel with T1).
 
 ### T3. Save (M)
 - Goal: editing, Save via `updateTask`, saved message, local title validation, 422 display.
 - Done when: tests — Save disabled on load and after reverting an edit; edit notes only → mock
-  receives PATCH with body exactly `{notes: …}` (assert via a wrapped fetch: pass
-  `renderWithRouter(path, {client: createApiClient({baseUrl:'http://mock', fetch: spy})})` where
-  `spy` records the request and forwards to a `createMockApi().fetch`); clear due → body `{due: null}`;
-  toggle done → screen shows the saved task and "Saved", and `mock.tasks()` reflects it; empty title
+  receives PATCH with body exactly `{notes: …}` (assert via a wrapped fetch: `const mock = createMockApi()`;
+  `spy` records each request's method, URL and parsed body, then returns `mock.fetch(input, init)`;
+  `renderWithRouter(path, {client: createApiClient({baseUrl:'http://mock', fetch: spy})})`; seed and
+  inspect with this `mock`, since the returned `mock` is `undefined`); clear due → body `{due: null}`;
+  toggle done → screen shows the saved task and "Saved", and `mock.tasks()` reflects it; fields
+  disabled while the PATCH is in flight (spy holds the response on a deferred promise); empty title
   and 201-char title → message, no PATCH; a server 422 (e.g. notes of 2001 characters) → its `msg`
-  shown, edits kept. (AC2, AC3, AC7)
+  shown, edits kept. (AC2, AC3, AC6)
 - Depends on: T1, T2.
 
 ### T4. Delete (S)
 - Goal: Delete button, confirm dialog, `deleteTask`, `navigate({ to: '/' })`.
 - Done when: tests — Delete opens a dialog; "Cancel"/no → dialog closes, still on `/tasks/$id`,
   `mock.tasks()` still has the task, no DELETE sent; yes → `mock.tasks()` no longer has it and
-  `router.state.location.pathname === '/'`. (AC4)
+  `router.state.location.pathname === '/'`; task deleted from the mock after load, then yes →
+  also navigates to `/` (A8). (AC4)
 - Depends on: T2.
 
 ### Sequence
@@ -197,19 +224,17 @@ T1 ∥ T2 → T3 ∥ T4. Total: 3×S + 1×M ≈ 2 days. One PR.
 | AC3 | T1, T3 | unit + screen | local title messages, nothing sent; API 422 `msg` shown |
 | AC4 | T4 | screen | confirm; yes deletes and navigates to `/`; no does nothing |
 | AC5 | all | CI | `npm run lint`, `typecheck`, `test`, `build` |
-| AC6 | T2 | screen | flag off → "Not built yet" |
-| AC7 | T2, T3 | screen | spinner; 501; edits kept on error |
+| AC6 | T2, T3 | screen | spinner; 501; edits kept on error |
 
-Each test calls `vi.stubEnv('VITE_FF_TASK', 'true')` and `vi.unstubAllEnvs()` after, seeds with
-`mock.seed([...])`, and uses `@testing-library/user-event`. Regression risk: `src/routes/routeTree.test.ts`
+No test stubs `VITE_FF_TASK`. Tests seed with `mock.seed([...])` and use `@testing-library/user-event`. Regression risk: `src/routes/routeTree.test.ts`
 and the other screens' tests are untouched; run the full suite.
 
 ## 8. Rollout and rollback
 
-- **Feature flag:** `VITE_FF_TASK` (build-time env var, `src/flags.ts` `isTaskEnabled()`), off by
-  default; already exists, no new flag. With it off, `/tasks/$id` shows "Not built yet" exactly as today.
-- Turn on by setting `VITE_FF_TASK=true` in the build environment; roll back by unsetting it and
-  rebuilding. No migrations, no config or infrastructure changes.
+- **Feature flag:** none. The issue says the screen ships with no flag and its author confirmed it
+  on 2026-11-23: until this PR is merged, the scaffold's "Not built yet" is the off state, and
+  merging it is the release. `VITE_FF_TASK` no longer gates anything.
+- **Rollback:** revert the PR. No migrations, no config or infrastructure changes.
 
 ## 9. Risks
 
@@ -221,7 +246,8 @@ and the other screens' tests are untouched; run the full suite.
 
 ## 10. Technical debt
 
-None taken on. `VITE_FF_TASK` is removed in a follow-up once the screen ships (README "Feature flags").
+`isTaskEnabled` / `VITE_FF_TASK` in `src/flags.ts` (and its test, and README "Feature flags")
+become dead once this merges; they are outside this issue's files, so their removal is a follow-up.
 
 ## 11. Open questions
 
@@ -229,5 +255,5 @@ None blocking. A1–A6 record the assumptions made.
 
 ## 12. Follow-ups
 
-- Remove `VITE_FF_TASK` after release.
+- Remove `isTaskEnabled`, its test and `VITE_FF_TASK` from `src/flags.ts`, `src/flags.test.ts` and the README.
 - Link task rows on the Tasks screen to `/tasks/$id` if that issue does not already.

@@ -24,8 +24,7 @@ Derived (implied by the issue and the codebase's conventions; not in the issue's
 
 | ID | Criterion |
 |---|---|
-| AC6 (derived) | The screen stays behind `VITE_FF_TASK`: while the flag is off, `/tasks/$id` still shows "Not built yet". |
-| AC7 (derived) | While the task loads the screen shows the shared loading state; any error other than a 404 or 422 shows the shared error state (501 "Not built yet on the server"; otherwise "Could not reach the API" with Retry). An error on Save or Delete keeps the person's edits on screen. |
+| AC6 (derived) | While the task loads the screen shows the shared loading state; any error other than a 404 or 422 shows the shared error state (501 "Not built yet on the server"; otherwise "Could not reach the API" with Retry). An error on Save or Delete keeps the person's edits on screen. |
 
 ## Scope
 
@@ -33,3 +32,6 @@ In: `src/screens/task/` only — the screen component, its data hook, any form h
 
 Out (per the issue): the Tasks and Summary screens, the route files, the client, the mock, the
 contract, and any dependency.
+
+No feature flag (per the issue, confirmed by the issue's author on 2026-11-23): until this issue is
+merged, the scaffold's "Not built yet" is the off state, and merging it is the release.
