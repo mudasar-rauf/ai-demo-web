@@ -10,7 +10,7 @@ describe('AppLayout', () => {
 
     await userEvent.click(within(nav).getByRole('link', { name: 'Summary' }));
     expect(router.state.location.pathname).toBe('/summary');
-    expect(within(screen.getByRole('main')).getByText('Not built yet')).toBeInTheDocument();
+    expect(within(screen.getByRole('main')).getByRole('heading', { level: 1, name: 'Summary' })).toBeInTheDocument();
 
     await userEvent.click(within(nav).getByRole('link', { name: 'Tasks' }));
     expect(router.state.location.pathname).toBe('/');
