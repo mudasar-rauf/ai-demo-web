@@ -21,10 +21,13 @@ From the issue, in its words:
 
 Derived:
 
-- **AC5 (derived).** The screen ships behind the existing flag `VITE_FF_SUMMARY`, off by default. While it is off, `/summary` still shows "Not built yet", as today.
-- **AC6 (derived).** The share done is `done / total × 100` rounded to the nearest whole number (halves up), shown with a `%` sign, for example 1 of 3 done → `33%`, 2 of 3 → `67%`, 3 of 3 → `100%`.
-- **AC7 (derived).** While the API's summary endpoint is not built (it answers 501), the screen says "Not built yet on the server", as every screen does through the shared `ErrorState`. That message has no Retry: the shared rule treats 501 as "this endpoint is not deployed yet", not as a failure that retrying fixes. Every other error from `GET /tasks/summary` (a network error, a 500, a 503) says "Could not reach the API" and offers Retry, which is how AC3's "offers to try again" is met. (The plan records this reading as assumption A2 and open question Q1.)
+- **AC5 (derived).** The share done is `done / total × 100` rounded to the nearest whole number (halves up), shown with a `%` sign, for example 1 of 3 done → `33%`, 2 of 3 → `67%`, 3 of 3 → `100%`.
+- **AC6 (derived).** While the API's summary endpoint is not built (it answers 501), the screen says "Not built yet on the server", as every screen does through the shared `ErrorState`. That message has no Retry: the shared rule treats 501 as "this endpoint is not deployed yet", not as a failure that retrying fixes. Any other error the shared `ErrorState` knows (404, 422) gets its shared message. Every remaining error from `GET /tasks/summary` (a network error, a 500, a 503) says "Could not reach the API" and offers Retry, which is how AC3's "offers to try again" is met. (The plan records this reading as assumption A2 and open question Q1.)
+
+## Release
+
+No feature flag (decided at the plan gate for the demo issues): until this issue is merged, the scaffold's "Not built yet" is the off state, and merging it is the release. The screen no longer checks `VITE_FF_SUMMARY`; `src/flags.ts` is left as it is.
 
 ## Not in scope
 
-The Tasks and Task screens, the route files, the client, the mock, the contract, and any dependency. Shared components (`LoadingState`, `ErrorState`, `AppLayout`) are used as they are, not changed.
+The Tasks and Task screens, the route files, the client, the mock, the contract, and any dependency. Shared components (`LoadingState`, `ErrorState`, `AppLayout`) and `src/flags.ts` are used or left as they are, not changed.
