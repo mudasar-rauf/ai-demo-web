@@ -6,6 +6,7 @@ import { useNavigate, useSearch } from '@tanstack/react-router';
 import type { TaskStatus } from '../../api/types';
 import { ErrorState } from '../../components/ErrorState';
 import { LoadingState } from '../../components/LoadingState';
+import { AddTaskForm } from './AddTaskForm';
 import { TaskRow } from './TaskRow';
 import { useTasksData, type TasksData } from './useTasksData';
 
@@ -36,6 +37,7 @@ export function TasksScreen() {
 
   return (
     <VStack gap={4}>
+      <AddTaskForm onAdd={data.addTask} />
       <TabList role="tablist" value={status} onChange={choose} hasDivider>
         {TABS.map((tab) => (
           <Tab key={tab.status} value={tab.status} label={tab.label} panelId={PANEL_ID} />

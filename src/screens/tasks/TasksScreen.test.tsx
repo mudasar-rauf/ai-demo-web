@@ -1,10 +1,12 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 import { createApiClient } from '../../api/client';
 import { createMockApi, type MockApi } from '../../api/mock';
 import type { Task } from '../../api/types';
 import { renderWithRouter } from '../../test/renderWithRouter';
+
+type FetchSpy = Mock<typeof fetch>;
 
 let ids = 0;
 function task(overrides: Partial<Task> = {}): Task {
@@ -43,7 +45,7 @@ async function renderTasks(path = '/', seed: Task[] = [MILK, BREAD, TAX], setup?
   return { ...result, mock, fetchSpy, main };
 }
 
-function requestedUrls(fetchSpy: ReturnType<typeof vi.fn>): string[] {
+function requestedUrls(fetchSpy: FetchSpy): string[] {
   return fetchSpy.mock.calls.map(([input]) => String(input));
 }
 
@@ -66,7 +68,7 @@ describe('TasksScreen: the list (AC1)', () => {
     expect(rowTitles(main)).toEqual(['File taxes', 'Bake bread', 'Buy milk']);
     expect(within(main).getByRole('link', { name: 'Buy milk' })).toBeInTheDocument();
     expect(within(main).getByText('Due 2026-11-23')).toBeInTheDocument();
-    expect(within(main).getAllByText(/^Due /)).toHaveLength(1);
+    expect(within(main).getAllByText(/^Due \d/)).toHaveLength(1);
     expect(within(main).getByRole('checkbox', { name: 'Done: File taxes' })).toBeChecked();
     expect(within(main).getByRole('checkbox', { name: 'Done: Bake bread' })).not.toBeChecked();
     expect(within(main).getByRole('checkbox', { name: 'Done: Buy milk' })).not.toBeChecked();
@@ -186,9 +188,9 @@ describe('TasksScreen: links (AC6)', () => {
 });
 
 /** The calls that were not GETs, as method, URL and parsed body. */
-function writes(fetchSpy: ReturnType<typeof vi.fn>) {
+function writes(fetchSpy: FetchSpy) {
   return fetchSpy.mock.calls
-    .map(([input, init]: [unknown, RequestInit | undefined]) => ({
+    .map(([input, init]) => ({
       method: init?.method ?? 'GET',
       url: String(input),
       body: init?.body ? JSON.parse(String(init.body)) : undefined,
@@ -252,5 +254,117 @@ describe('TasksScreen: ticking a task done (AC4)', () => {
     await userEvent.click(bread);
     await waitFor(() => expect(within(main).queryByText(/Could not update/)).not.toBeInTheDocument());
     expect(bread).toBeChecked();
+  });
+});
+
+describe('TasksScreen: adding a task (AC3)', () => {
+  it('sits above the tabs, and adding puts the new task at the top without a reload and clears the form', async () => {
+    const { main, mock, fetchSpy } = await renderTasks();
+    await findRows(main);
+    const title = within(main).getByRole('textbox', { name: 'Title' });
+    expect(title.compareDocumentPosition(within(main).getByRole('tablist')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await userEvent.type(title, 'Water the plants');
+    await userEvent.click(within(main).getByRole('button', { name: 'Add task' }));
+
+    await waitFor(() => expect(rowTitles(main)[0]).toBe('Water the plants'));
+    expect(rowTitles(main)).toHaveLength(4);
+    expect(title).toHaveValue('');
+    expect(mock.tasks().map((t) => t.title)).toContain('Water the plants');
+    expect(writes(fetchSpy)).toEqual([{ method: 'POST', url: 'http://mock/tasks', body: { title: 'Water the plants' } }]);
+    // Without a reload: the list was fetched once, on mount.
+    expect(fetchSpy.mock.calls.filter(([, init]) => (init?.method ?? 'GET') === 'GET')).toHaveLength(1);
+  });
+
+  it('sends the due date when one is given, shows it on the new row, and clears it', async () => {
+    const { main, fetchSpy } = await renderTasks();
+    await findRows(main);
+    const due = within(main).getByRole('combobox', { name: /Due date/ });
+
+    await userEvent.type(within(main).getByRole('textbox', { name: 'Title' }), 'Renew passport');
+    await userEvent.type(due, '2026-12-01');
+    await userEvent.tab();
+    await userEvent.click(within(main).getByRole('button', { name: 'Add task' }));
+
+    await waitFor(() => expect(rowTitles(main)[0]).toBe('Renew passport'));
+    expect(writes(fetchSpy)[0].body).toEqual({ title: 'Renew passport', due: '2026-12-01' });
+    expect(within(main).getByText('Due 2026-12-01')).toBeInTheDocument();
+    expect(due).toHaveValue('');
+  });
+
+  it('adds the first task to an empty list, replacing the empty words', async () => {
+    const { main } = await renderTasks('/', []);
+    await within(main).findByText('No tasks yet');
+
+    await userEvent.type(within(main).getByRole('textbox', { name: 'Title' }), 'First one{Enter}');
+
+    await waitFor(() => expect(rowTitles(main)).toEqual(['First one']));
+    expect(within(main).queryByText('No tasks yet')).not.toBeInTheDocument();
+  });
+
+  it('shows a 422 beside the title, keeps what was typed, and creates nothing', async () => {
+    const { main, mock } = await renderTasks();
+    await findRows(main);
+    const title = within(main).getByRole('textbox', { name: 'Title' });
+
+    await userEvent.type(title, 'x'.repeat(201));
+    await userEvent.click(within(main).getByRole('button', { name: 'Add task' }));
+
+    expect(await within(main).findByText('String should have at most 200 characters')).toBeInTheDocument();
+    expect(title).toHaveAccessibleDescription(expect.stringContaining('String should have at most 200 characters'));
+    expect(title).toHaveValue('x'.repeat(201));
+    expect(rowTitles(main)).toHaveLength(3);
+    expect(mock.tasks()).toHaveLength(3);
+
+    await userEvent.clear(title);
+    await userEvent.click(within(main).getByRole('button', { name: 'Add task' }));
+    expect(await within(main).findByText('String should have at least 1 character')).toBeInTheDocument();
+    expect(within(main).queryByText('String should have at most 200 characters')).not.toBeInTheDocument();
+    expect(mock.tasks()).toHaveLength(3);
+  });
+
+  it('shows a 422 on the due date beside the due date, not the title', async () => {
+    const mock = createMockApi();
+    const body = { detail: [{ loc: ['body', 'due'], msg: 'Input should be a valid date', type: 'date_parsing' }] };
+    const fetchSpy = vi.fn<typeof fetch>((input, init) =>
+      init?.method === 'POST' ? Promise.resolve(Response.json(body, { status: 422 })) : mock.fetch(input, init),
+    );
+    await renderWithRouter('/', { client: createApiClient({ baseUrl: 'http://mock', fetch: fetchSpy }) });
+    const main = screen.getByRole('main');
+    await within(main).findByText('No tasks yet');
+
+    await userEvent.type(within(main).getByRole('textbox', { name: 'Title' }), 'Dated');
+    await userEvent.click(within(main).getByRole('button', { name: 'Add task' }));
+
+    expect(await within(main).findByText('Input should be a valid date')).toBeInTheDocument();
+    expect(within(main).getByRole('combobox', { name: /Due date/ })).toHaveAccessibleDescription(
+      expect.stringContaining('Input should be a valid date'),
+    );
+    expect(within(main).getByRole('textbox', { name: 'Title' })).not.toHaveAccessibleDescription(
+      expect.stringContaining('Input should be a valid date'),
+    );
+  });
+
+  it('on the Done tab, creates the task without listing it there', async () => {
+    const { main, mock } = await renderTasks('/?status=done');
+    await findRows(main);
+
+    await userEvent.type(within(main).getByRole('textbox', { name: 'Title' }), 'Not done yet');
+    await userEvent.click(within(main).getByRole('button', { name: 'Add task' }));
+
+    await waitFor(() => expect(mock.tasks().map((t) => t.title)).toContain('Not done yet'));
+    await waitFor(() => expect(within(main).getByRole('textbox', { name: 'Title' })).toHaveValue(''));
+    expect(rowTitles(main)).toEqual(['File taxes']);
+  });
+
+  it('shows the error under the form when adding fails for another reason', async () => {
+    const { main } = await renderTasks('/', [MILK], (mock) => mock.notImplemented('createTask'));
+    await findRows(main);
+
+    await userEvent.type(within(main).getByRole('textbox', { name: 'Title' }), 'Anything');
+    await userEvent.click(within(main).getByRole('button', { name: 'Add task' }));
+
+    expect(await within(main).findByText('Not built yet on the server')).toBeInTheDocument();
+    expect(rowTitles(main)).toEqual(['Buy milk']);
   });
 });
